@@ -6,24 +6,36 @@ Puppet::Type.type(:cs_colocation).provide(:crm, :parent => Puppet::Provider::Cor
         aspects.'
 
   # Path to the crm binary for interacting with the cluster configuration.
-  commands :crm => 'crm'
-  commands :crm_attribute => 'crm_attribute'
+  commands :crm => '/usr/sbin/crm'
+  commands :crm_attribute => '/usr/sbin/crm_attribute'
 
   def self.instances
 
-    block_until_ready
-
     instances = []
 
-    cmd = [ command(:crm), 'configure', 'show', 'xml' ]
+    cmd = []
+    cmd << command(:crm)
+    cmd << 'configure'
+    cmd << 'show'
+    cmd << 'xml'
     raw, status = Puppet::Util::SUIDManager.run_and_capture(cmd)
     doc = REXML::Document.new(raw)
 
     doc.root.elements['configuration'].elements['constraints'].each_element('rsc_colocation') do |e|
       items = e.attributes
+      if ! items['rsc-role'].nil?
+        rsc = "#{items['rsc']}:#{items['rsc-role']}"
+      else
+        rsc = items['rsc']
+      end
+      if ! items['with-rsc-role'].nil?
+        with_rsc = "#{items['with-rsc']}:#{items['with-rsc-role']}"
+      else
+        with_rsc = items['with-rsc']
+      end
       colocation = {
         :name => items['id'],
-        :primitives => [ items['rsc'], items['with-rsc'] ],
+        :primitives => [ rsc, with_rsc ],
         :score => items['score']
       }
 
@@ -54,7 +66,11 @@ Puppet::Type.type(:cs_colocation).provide(:crm, :parent => Puppet::Provider::Cor
 
   # Unlike create we actually immediately delete the item.
   def destroy
-    cmd = [ command(:crm), 'configure', 'delete', @resource[:name] ]
+    cmd = []
+    cmd << command(:crm)
+    cmd << 'configure'
+    cmd << 'delete'
+    cmd << @resource[:name]
     debug('Revmoving colocation')
     Puppet::Util.execute(cmd)
     @property_hash.clear
@@ -90,11 +106,12 @@ Puppet::Type.type(:cs_colocation).provide(:crm, :parent => Puppet::Provider::Cor
   # as stdin for the crm command.
   def flush
     unless @property_hash.empty?
-      updated = 'colocation '
+      updated = ''
+      updated << "colocation "
       updated << "#{@property_hash[:name]} "
       updated << "#{@property_hash[:score]}: "
       updated << "#{@property_hash[:primitives].join(' ')}"
-      cmd = [ command(:crm), 'configure', 'load','update', '-' ]
+      cmd = [ command(:crm), 'configure', 'load', 'update', '-' ]
       Tempfile.open('puppet_crm_update') do |tmpfile|
         tmpfile.write(updated)
         tmpfile.flush

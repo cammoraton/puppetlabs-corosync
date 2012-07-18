@@ -1,54 +1,122 @@
-module Puppet
-  newtype(:cs_colocation) do
-    @doc = "Type for manipulating corosync/pacemaker colocation.  Colocation
-      is the grouping together of a set of primitives so that they travel
-      together when one of them fails.  For instance, if a web server vhost
-      is colocated with a specific ip address and the web server software
-      crashes, the ip address with migrate to the new host with the vhost.
+require 'puppet/provider/corosync'
+Puppet::Type.type(:cs_colocation).provide(:crm, :parent => Puppet::Provider::Corosync) do
+  desc 'Specific provider for a rather specific type since I currently have no plan to
+        abstract corosync/pacemaker vs. keepalived.  This provider will check the state
+        of current primitive colocations on the system; add, delete, or adjust various
+        aspects.'
 
-      More information on Corosync/Pacemaker colocation can be found here:
+  # Path to the crm binary for interacting with the cluster configuration.
+  commands :crm => '/usr/sbin/crm'
+  commands :crm_attribute => '/usr/sbin/crm_attribute'
 
-      * http://www.clusterlabs.org/doc/en-US/Pacemaker/1.1/html/Clusters_from_Scratch/_ensuring_resources_run_on_the_same_host.html"
+  def self.instances
 
-    ensurable
+    instances = []
 
-    newparam(:name) do
-      desc "Identifier of the colocation entry.  This value needs to be unique
-        across the entire Corosync/Pacemaker configuration since it doesn't have
-        the concept of name spaces per type."
+    cmd = []
+    cmd << command(:crm)
+    cmd << 'configure'
+    cmd << 'show'
+    cmd << 'xml'
+    raw, status = Puppet::Util::SUIDManager.run_and_capture(cmd)
+    doc = REXML::Document.new(raw)
 
-      isnamevar
-    end
-
-    newproperty(:primitives, :array_matching => :all) do
-      desc "Two Corosync primitives to be grouped together.  Colocation groups
-        come in twos and order is irrelavent.  Property will raise an error if
-        you do not provide a two value array."
-
-      # Have to redefine should= here so we can sort the array that is given to
-      # us by the manifest.  While were checking on the class of our value we
-      # are going to go ahead and do some validation too.  The way Corosync
-      # colocation works we need to only accept two value arrays.
-      def should=(value)
-        super
-        if value.is_a? Array
-          raise Puppet::Error, "Puppet::Type::Cs_Colocation: The primitives property must be a two value array." unless value.size == 2
-          @should.sort!
-        else
-          raise Puppet::Error, "Puppet::Type::Cs_Colocation: The primitives property must be a two value array."
-          @should
-        end
+    doc.root.elements['configuration'].elements['constraints'].each_element('rsc_colocation') do |e|
+      items = e.attributes
+      if ! items['rsc-role'].nil?
+        rsc = "#{items['rsc']}:#{items['rsc-role']}"
+      else
+        rsc = items['rsc']
       end
+      if ! items['with-rsc-role'].nil?
+        with_rsc = "#{items['with-rsc']}:#{items['with-rsc-role']}"
+      else
+        with_rsc = items['with-rsc']
+      end
+      colocation = {
+        :name => items['id'],
+        :primitives => [ rsc, with_rsc ],
+        :score => items['score']
+      }
+
+      # Sorting the array of primitives because order doesn't matter so someone
+      # switching the order around shouldn't generate an event.
+      colocation_instance = {
+        :name       => colocation[:name],
+        :ensure     => :present,
+        :primitives => colocation[:primitives].sort,
+        :score      => colocation[:score],
+        :provider   => self.name
+      }
+      instances << new(colocation_instance)
     end
+    instances
+  end
 
-    newproperty(:score) do
-      desc "The priority of this colocation.  Primitives can be a part of
-        multiple colocation groups and so there is a way to control which
-        primitives get priority when forcing the move of other primitives.
-        This value can be an integer but is often defined as the string
-        INFINITY."
+  # Create just adds our resource to the property_hash and flush will take care
+  # of actually doing the work.
+  def create
+    @property_hash = {
+      :name       => @resource[:name],
+      :ensure     => :present,
+      :primitives => @resource[:primitives],
+      :score      => @resource[:score]
+    }
+  end
 
-        defaultto 'INFINITY'
+  # Unlike create we actually immediately delete the item.
+  def destroy
+    cmd = []
+    cmd << command(:crm)
+    cmd << 'configure'
+    cmd << 'delete'
+    cmd << @resource[:name]
+    debug('Revmoving colocation')
+    Puppet::Util.execute(cmd)
+    @property_hash.clear
+  end
+
+  # Getter that obtains the primitives array for us that should have
+  # been populated by prefetch or instances (depends on if your using
+  # puppet resource or not).
+  def primitives
+    @property_hash[:primitives]
+  end
+
+  # Getter that obtains the our score that should have been populated by
+  # prefetch or instances (depends on if your using puppet resource or not).
+  def score
+    @property_hash[:score]
+  end
+
+  # Our setters for the primitives array and score.  Setters are used when the
+  # resource already exists so we just update the current value in the property
+  # hash and doing this marks it to be flushed.
+  def primitives=(should)
+    @property_hash[:primitives] = should.sort
+  end
+
+  def score=(should)
+    @property_hash[:score] = should
+  end
+
+  # Flush is triggered on anything that has been detected as being
+  # modified in the property_hash.  It generates a temporary file with
+  # the updates that need to be made.  The temporary file is then used
+  # as stdin for the crm command.
+  def flush
+    unless @property_hash.empty?
+      updated = ''
+      updated << "colocation "
+      updated << "#{@property_hash[:name]} "
+      updated << "#{@property_hash[:score]}: "
+      updated << "#{@property_hash[:primitives].join(' ')}"
+      cmd = [ command(:crm), 'configure', 'load', 'update', '-' ]
+      Tempfile.open('puppet_crm_update') do |tmpfile|
+        tmpfile.write(updated)
+        tmpfile.flush
+        Puppet::Util.execute(cmd, :stdinfile => tmpfile.path.to_s)
+      end
     end
   end
 end

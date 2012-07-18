@@ -1,12 +1,12 @@
 require 'puppet/provider/corosync'
 Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Corosync) do
   desc 'Specific provider for a rather specific type since I currently have no
-        plan to abstract corosync/pacemaker vs. keepalived.  Primitives in
-        Corosync are the thing we desire to monitor; websites, ipaddresses,
-        databases, etc, etc.  Here we manage the creation and deletion of
-        these primitives.  We will accept a hash for what Corosync calls
-        operations and parameters.  A hash is used instead of constucting a
-        better model since these values can be almost anything.'
+plan to abstract corosync/pacemaker vs. keepalived. Primitives in
+Corosync are the thing we desire to monitor; websites, ipaddresses,
+databases, etc, etc. Here we manage the creation and deletion of
+these primitives. We will accept a hash for what Corosync calls
+operations and parameters. A hash is used instead of constucting a
+better model since these values can be almost anything.'
 
   # Path to the crm binary for interacting with the cluster configuration.
   commands :crm => 'crm'
@@ -22,9 +22,9 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
     raw, status = Puppet::Util::SUIDManager.run_and_capture(cmd)
     doc = REXML::Document.new(raw)
 
-    # We are obtaining four different sets of data in this block.  We obtain
+    # We are obtaining four different sets of data in this block. We obtain
     # key/value pairs for basic primitive information (which Corosync stores
-    # in the configuration as "resources").  After getting that basic data we
+    # in the configuration as "resources"). After getting that basic data we
     # descend into parameters, operations (which the config labels as
     # instance_attributes and operations), and metadata then generateembedded
     # hash structures of each entry.
@@ -34,8 +34,8 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
       items = e.attributes
       primitive.merge!({
         items['id'].to_sym => {
-          :class    => items['class'],
-          :type     => items['type'],
+          :class => items['class'],
+          :type => items['type'],
           :provider => items['provider']
         }
       })
@@ -66,18 +66,16 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
         end
       end
       primitive_instance = {
-        :name            => primitive.first[0],
-        :ensure          => :present,
+        :name => primitive.first[0],
+        :ensure => :present,
         :primitive_class => primitive.first[1][:class],
-        :provided_by     => primitive.first[1][:provider],
-        :primitive_type  => primitive.first[1][:type],
-        :parameters      => primitive.first[1][:parameters],
-        :operations      => primitive.first[1][:operations],
-        :metadata        => primitive.first[1][:metadata],
-        :promotable      => :false,
-        :provider        => self.name
+        :provided_by => primitive.first[1][:provider],
+        :primitive_type => primitive.first[1][:type],
+        :parameters => primitive.first[1][:parameters],
+        :operations => primitive.first[1][:operations],
+        :metadata => primitive.first[1][:metadata],
+        :provider => self.name
       }
-      primitive_instance[:promotable] = :true if e.parent.name == 'master'
       instances << new(primitive_instance)
     end
     instances
@@ -87,19 +85,18 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
   # of actually doing the work.
   def create
     @property_hash = {
-      :name            => @resource[:name],
-      :ensure          => :present,
+      :name => @resource[:name],
+      :ensure => :present,
       :primitive_class => @resource[:primitive_class],
-      :provided_by     => @resource[:provided_by],
-      :primitive_type  => @resource[:primitive_type],
-      :promotable      => @resource[:promotable]
+      :provided_by => @resource[:provided_by],
+      :primitive_type => @resource[:primitive_type]
     }
     @property_hash[:parameters] = @resource[:parameters] if ! @resource[:parameters].nil?
     @property_hash[:operations] = @resource[:operations] if ! @resource[:operations].nil?
     @property_hash[:metadata] = @resource[:metadata] if ! @resource[:metadata].nil?
   end
 
-  # Unlike create we actually immediately delete the item.  Corosync forces us
+  # Unlike create we actually immediately delete the item. Corosync forces us
   # to "stop" the primitive before we are able to remove it.
   def destroy
     cmd = [ command(:crm), 'resource', 'stop', @resource[:name] ]
@@ -125,12 +122,8 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
   def metadata
     @property_hash[:metadata]
   end
-
-  def promotable
-    @property_hash[:promotable]
-  end
-
-  # Our setters for parameters and operations.  Setters are used when the
+  
+  # Our setters for parameters and operations. Setters are used when the
   # resource already exists so we just update the current value in the
   # property_hash and doing this marks it to be flushed.
   def parameters=(should)
@@ -145,22 +138,11 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
     @property_hash[:metadata] = should
   end
 
-  def promotable=(should)
-    case should
-    when :true
-      @property_hash[:promotable] = should
-    when :false
-      @property_hash[:promotable] = should
-      cmd = [ command(:crm), 'resource', 'stop', "ms_#{@resource[:name]}" ]
-      cmd = [ command(:crm), 'configure', 'delete', "ms_#{@resource[:name]}" ]
-      Puppet::Util.execute(cmd)
-    end
-  end
 
   # Flush is triggered on anything that has been detected as being
-  # modified in the property_hash.  It generates a temporary file with
-  # the updates that need to be made.  The temporary file is then used
-  # as stdin for the crm command.  We have to do a bit of munging of our
+  # modified in the property_hash. It generates a temporary file with
+  # the updates that need to be made. The temporary file is then used
+  # as stdin for the crm command. We have to do a bit of munging of our
   # operations and parameters hash to eventually flatten them into a string
   # that can be used by the crm command.
   def flush
@@ -191,15 +173,12 @@ Puppet::Type.type(:cs_primitive).provide(:crm, :parent => Puppet::Provider::Coro
       updated << "#{operations} " unless operations.nil?
       updated << "#{parameters} " unless parameters.nil?
       updated << "#{metadatas} " unless metadatas.nil?
-      if @property_hash[:promotable] == :true
-        updated << "\n"
-        updated << "ms ms_#{@property_hash[:name]} #{@property_hash[:name]}"
-      end
       cmd = [ command(:crm), 'configure', 'load', 'update', '-' ]
       Tempfile.open('puppet_crm_update') do |tmpfile|
         tmpfile.write(updated)
         tmpfile.flush
         Puppet::Util.execute(cmd, :stdinfile => tmpfile.path.to_s)
+        Puppet::Util.execute("echo #{cmd} >> /tmp/crm_commands")
       end
     end
   end
