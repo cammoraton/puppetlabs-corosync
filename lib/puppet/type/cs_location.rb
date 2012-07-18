@@ -75,8 +75,6 @@ module Puppet
       desc "The name of a rule. This value needs to be unique
         across the entire Corosync/Pacemaker configuration since it doesn't have
         the concept of name spaces per type."
-      
-      isnamevar
     end
     
     newproperty(:operator) do
